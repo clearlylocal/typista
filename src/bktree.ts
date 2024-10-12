@@ -7,6 +7,7 @@ import { levenshteinDistance } from '@std/text/levenshtein-distance'
 import { damerauDistance } from './damerauSymSpell.ts'
 import { memoize } from '@std/cache/memoize'
 import { LruCache } from '@std/cache/lru-cache'
+import { lexicographicalCompare } from './utils.ts'
 
 // TODO: fix types in @std/cache/memoize to avoid need for `any`
 // deno-lint-ignore no-explicit-any
@@ -15,9 +16,13 @@ const normalizeWith = memoize(function normalizeWith(normalizer: Normalizer, str
 	return normalizer(str)
 }, { cache: normalizationCache })
 type Normalizer = (str: string) => string
+// each builds on the previous so each normalization should only be done once (e.g. subsequent normalizations don't both
+// need to call `toLowerCase()`)
 const normalizers: Normalizer[] = [
+	// // seems slow, omit for now
+	// (str) => str.normalize(),
 	(str) => str.toLowerCase(),
-	(str) => str.toLowerCase().replaceAll(/(.)\1/gsu, '$1'),
+	(str) => str.replaceAll(/(.)\1/gsu, '$1'),
 ]
 
 export default class BkTree {
@@ -59,39 +64,55 @@ export default class BkTree {
 		}
 	}
 
-	#sort(queryTerm: string) {
+	#compare(queryTerm: string) {
 		return (a: string, b: string) => {
 			if (a === queryTerm) return -1
 			if (b === queryTerm) return 1
 
+			let na = a
+			let nb = b
+			let nQueryTerm = queryTerm
+
+			// prefer words that are normalized to the same thing as the query term
 			for (const normalizer of normalizers) {
-				if (normalizeWith(normalizer, a) === normalizeWith(normalizer, queryTerm)) return -1
-				if (normalizeWith(normalizer, b) === normalizeWith(normalizer, queryTerm)) return 1
+				na = normalizeWith(normalizer, na)
+				nb = normalizeWith(normalizer, nb)
+				nQueryTerm = normalizeWith(normalizer, nQueryTerm)
+
+				if (na === nQueryTerm) return -1
+				if (nb === nQueryTerm) return 1
 			}
 
+			na = a
+			nb = b
+			nQueryTerm = queryTerm
+
+			// prefer words that have closer Demerau distance to the query term
 			for (const normalizer of normalizers) {
-				const dam = damerauDistance(normalizeWith(normalizer, a), normalizeWith(normalizer, queryTerm)) -
-					damerauDistance(normalizeWith(normalizer, b), normalizeWith(normalizer, queryTerm))
-				if (dam) return dam
+				na = normalizeWith(normalizer, na)
+				nb = normalizeWith(normalizer, nb)
+				nQueryTerm = normalizeWith(normalizer, nQueryTerm)
+
+				const diff = damerauDistance(na, nQueryTerm) - damerauDistance(nb, nQueryTerm)
+				if (diff) return diff
 			}
 
-			for (let i = 0; i < Math.min(a.length, b.length); i++) {
+			// prefer words that start with a substring of the query term
+			for (let i = 0; i < Math.min(a.length, b.length); ++i) {
 				const aeq = a[i] === queryTerm[i]
 				const beq = b[i] === queryTerm[i]
+
 				if (aeq && !beq) return -1
 				if (!aeq && beq) return 1
 			}
 
-			// Lexicographical order - not semantically useful, just for sort stability (we use naive version rather than
-			// localeCompare for performance)
-			return a === b ? 0 : a > b ? 1 : -1
+			// just to ensure that the order is stable
+			return lexicographicalCompare(a, b)
 		}
 	}
 
 	query(queryTerm: string, maxDist: number): string[] {
-		const resultsData = this.#query(queryTerm, maxDist).map((x) => x.text).sort(this.#sort(queryTerm))
-
-		normalizationCache.clear()
+		const resultsData = this.#query(queryTerm, maxDist).map((x) => x.text).sort(this.#compare(queryTerm))
 
 		return resultsData
 	}
@@ -111,8 +132,9 @@ export default class BkTree {
 		const max = dist + maxDist
 
 		for (let i = min; i <= max; ++i) {
-			if (this.children[i] != null) {
-				this.children[i].#query(queryTerm, maxDist, resultsData)
+			const child = this.children[i]
+			if (child != null) {
+				child.#query(queryTerm, maxDist, resultsData)
 			}
 		}
 

@@ -1,13 +1,15 @@
 // Ported and modified from https://github.com/wolfgarbe/SymSpell
 // MIT License (Copyright (c) 2018 Wolf Garbe)
 
-type UintArray = InstanceType<typeof UintArray>
-const UintArray = Uint16Array satisfies Uint8ArrayConstructor | Uint16ArrayConstructor | Uint32ArrayConstructor
+import { memoize } from '@std/cache/memoize'
+import { LruCache } from '@std/cache/lru-cache'
+import { lexicographicalCompare } from './utils.ts'
 
-const SIZE = 65536
+const NULL_CHAR = '\x00'
 
-let baseChar1Costs = new UintArray(SIZE)
-let basePrevChar1Costs = new UintArray(SIZE)
+const INITIAL_SIZE = 1000
+let baseChar1Costs = new Int32Array(INITIAL_SIZE)
+let basePrevChar1Costs = new Int32Array(INITIAL_SIZE)
 
 /**
  * Calculates starting position and lengths of two strings such that common
@@ -24,7 +26,7 @@ function prefixSuffixPrep(chars1: string[], chars2: string[]): { len1: number; l
 	}
 	// prefix common to both strings can be ignored
 	let start = 0
-	while (start !== len1 && chars1[start] === chars2[start]) start++
+	while (start !== len1 && chars1[start] === chars2[start]) ++start
 	if (start !== 0) {
 		len2 -= start // length of the part excluding common prefix and suffix
 		len1 -= start
@@ -33,7 +35,10 @@ function prefixSuffixPrep(chars1: string[], chars2: string[]): { len1: number; l
 	return { len1, len2, start }
 }
 
-export function damerauDistance(str1: string, str2: string): number {
+// TODO: fix types in @std/cache/memoize to avoid need for `any`
+// deno-lint-ignore no-explicit-any
+const damerauCache = new LruCache<string, any>(1e5)
+export const damerauDistance = memoize(function damerauDistance(str1: string, str2: string): number {
 	let chars1 = [...str1]
 	let chars2 = [...str2]
 
@@ -48,14 +53,15 @@ export function damerauDistance(str1: string, str2: string): number {
 	if (len1 === 0) return len2
 
 	if (len2 > baseChar1Costs.length) {
-		baseChar1Costs = new UintArray(len2)
-		basePrevChar1Costs = new UintArray(len2)
+		baseChar1Costs = new Int32Array(len2)
+		basePrevChar1Costs = new Int32Array(len2)
 	}
 
 	return distanceInternal(chars1, chars2, len1, len2, start, baseChar1Costs, basePrevChar1Costs)
-}
-
-const NULL_CHAR = '\x00'
+}, {
+	cache: damerauCache,
+	getKey: (str1, str2) => [str1, str2].sort(lexicographicalCompare).join(NULL_CHAR),
+})
 
 function distanceInternal(
 	chars1: string[],
@@ -63,27 +69,26 @@ function distanceInternal(
 	len1: number,
 	len2: number,
 	start: number,
-	char1Costs: UintArray,
-	prevChar1Costs: UintArray,
+	char1Costs: Int32Array,
+	prevChar1Costs: Int32Array,
 ): number {
-	let j: number
-	for (j = 0; j < len2;) char1Costs[j] = ++j
+	for (let i = 0; i < len2;) char1Costs[i] = ++i
 	let char1 = NULL_CHAR
 	let currentCost = 0
 	for (let i = 0; i < len1; ++i) {
 		const prevChar1 = char1
-		char1 = chars1[start + i]
+		char1 = chars1[start + i]!
 		let char2 = NULL_CHAR
-		let leftCharCost, aboveCharCost
-		leftCharCost = aboveCharCost = i
+		let aboveCharCost: number
+		let leftCharCost = aboveCharCost = i
 		let nextTransCost = 0
-		for (j = 0; j < len2; ++j) {
+		for (let j = 0; j < len2; ++j) {
 			const thisTransCost = nextTransCost
-			nextTransCost = prevChar1Costs[j]
-			prevChar1Costs[j] = currentCost = leftCharCost // cost of diagonal (substitution)
-			leftCharCost = char1Costs[j] // left now equals current cost (which will be diagonal at next iteration)
+			nextTransCost = prevChar1Costs[j]!
+			prevChar1Costs[j] = currentCost = leftCharCost! // cost of diagonal (substitution)
+			leftCharCost = char1Costs[j]! // left now equals current cost (which will be diagonal at next iteration)
 			const prevChar2 = char2
-			char2 = chars2[start + j]
+			char2 = chars2[start + j]!
 			if (char1 !== char2) {
 				if (aboveCharCost < currentCost) currentCost = aboveCharCost // deletion
 				if (leftCharCost < currentCost) currentCost = leftCharCost // insertion

@@ -1,7 +1,7 @@
 import Typo from 'typo-js'
 import Typista from './typista.ts'
 
-const ENABLE_LOGGING = Deno.permissions.querySync({ name: 'env' }).state !== 'granted'
+const ENABLE_LOGGING = Deno.permissions.requestSync({ name: 'env' }).state !== 'granted'
 	? false
 	: Deno.env.get('ENABLE_LOGGING')
 

@@ -24,7 +24,14 @@
 		"proseWrap": "preserve",
 		"exclude": ["README.md", "reference"]
 	},
-	"compilerOptions": { "strict": true },
+	"compilerOptions": {
+		"strict": true,
+		"exactOptionalPropertyTypes": true,
+		"useUnknownInCatchVariables": true,
+		"noImplicitOverride": true
+		// // TODO - enable (add incrementally for now)
+		// "noUncheckedIndexedAccess": true
+	},
 	"lint": {
 		"exclude": [],
 		"rules": {

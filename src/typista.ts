@@ -52,7 +52,7 @@ type SuggestOptions = {
 }
 const defaultSuggestOptions: SuggestOptions = {
 	maxDist: 0.2,
-	limit: undefined,
+	limit: 10,
 }
 
 /**
@@ -85,7 +85,7 @@ export default class Typista {
 
 		this.suggest = memoize(this.suggest.bind(this), {
 			cache: this.#suggestionCache,
-			getKey: (word, options) => JSON.stringify({ word, options }),
+			getKey: (word, options) => options ? JSON.stringify({ word, options }) : word,
 		})
 	}
 
@@ -93,7 +93,6 @@ export default class Typista {
 	// deno-lint-ignore no-explicit-any
 	#suggestionCache = new LruCache<string, any>(1e4)
 
-	// #softDeleted: Record<string, null | string[][]> = Object.create(null)
 	removeWord(word: string): void {
 		delete this.#dictionaryTable[word]
 
@@ -103,10 +102,9 @@ export default class Typista {
 	addWord(word: string, flags?: string[][]): void {
 		this.#dictionaryTable[word] = flags ?? null
 
-		// otherwise will be added via initialization with `#getBkTree` upon first call to `suggest` or `initBkTree`
-		if (this.#bktree) {
-			this.#bktree.addWord(word)
-		}
+		// If this.#bktree is null, we don't need to add now as it will be added at initialization via `#getBkTree`
+		// upon first call to `suggest` or `initBkTree`
+		this.#bktree?.addWord(word)
 
 		this.#suggestionCache.clear()
 	}
@@ -167,12 +165,13 @@ export default class Typista {
 		this.#rules = this.#parseAff(this.#affData)
 		// Save the rule codes that are used in compound rules.
 		this.#compoundRuleCodes = Object.create(null)
-		for (let i = 0, _len = this.#compoundRuleSources.length; i < _len; i++) {
-			const rule = this.#compoundRuleSources[i]
-			for (let j = 0, _jlen = rule.length; j < _jlen; j++) {
-				this.#compoundRuleCodes[rule[j]] = []
+
+		for (const rule of this.#compoundRuleSources) {
+			for (const r of rule) {
+				this.#compoundRuleCodes[r] = []
 			}
 		}
+
 		// If we add this ONLYINCOMPOUND flag to this.compoundRuleCodes, then _parseDIC
 		// will do the work of saving the list of words that are compound-only.
 		if (this.#flags.ONLYINCOMPOUND != null) {
@@ -190,15 +189,13 @@ export default class Typista {
 		// Build the full regular expressions for each compound rule.
 		// I have a feeling (but no confirmation yet) that this method of
 		// testing for compound words is probably slow.
-		for (let i = 0, _len = this.#compoundRuleSources.length; i < _len; i++) {
-			const ruleText = this.#compoundRuleSources[i]
+		for (const [i, ruleText] of this.#compoundRuleSources.entries()) {
 			let expressionText = ''
-			for (let j = 0, _jlen = ruleText.length; j < _jlen; j++) {
-				const character = ruleText[j]
-				if (character in this.#compoundRuleCodes) {
-					expressionText += '(' + this.#compoundRuleCodes[character].join('|') + ')'
+			for (const char of ruleText) {
+				if (char in this.#compoundRuleCodes) {
+					expressionText += '(' + this.#compoundRuleCodes[char].join('|') + ')'
 				} else {
-					expressionText += character
+					expressionText += char
 				}
 			}
 			this.#compoundRules[i] = new RegExp(expressionText, 'i')
@@ -208,15 +205,14 @@ export default class Typista {
 	/**
 	 * Parse the rules out from a .aff file.
 	 *
-	 * @param {string} data The contents of the affix file.
-	 * @returns object The rules from the file.
+	 * @param data The contents of the affix file.
+	 * @returns The rules from the file.
 	 */
 	#parseAff(data: string): Record<string, AffixRule> {
 		const rules: Record<string, AffixRule> = Object.create(null)
-		let line, subline, numEntries, lineParts
-		// let i, j, _len, _jlen
+		let line: string, subline: string, numEntries: number, lineParts: string[]
 		const lines = data.split(/\r?\n/)
-		for (let i = 0, _len = lines.length; i < _len; i++) {
+		for (let i = 0; i < lines.length; ++i) {
 			// Remove comment lines
 			line = this.#removeAffixComments(lines[i])
 			line = line.trim()
@@ -234,7 +230,7 @@ export default class Typista {
 					const combineable = definitionParts[2]
 					numEntries = parseInt(definitionParts[3], 10)
 					const entries: AffixEntry[] = []
-					for (let j = i + 1, _jlen = i + 1 + numEntries; j < _jlen; j++) {
+					for (let j = i + 1, _jlen = i + 1 + numEntries; j < _jlen; ++j) {
 						subline = lines[j]
 						lineParts = subline.split(/\s+/)
 						const charactersToRemove = lineParts[2]
@@ -280,7 +276,7 @@ export default class Typista {
 				}
 				case 'COMPOUNDRULE': {
 					numEntries = parseInt(definitionParts[1], 10)
-					for (let j = i + 1, _jlen = i + 1 + numEntries; j < _jlen; j++) {
+					for (let j = i + 1, _jlen = i + 1 + numEntries; j < _jlen; ++j) {
 						line = lines[j]
 						lineParts = line.split(/\s+/)
 						this.#compoundRuleSources.push(lineParts[1])
@@ -318,8 +314,8 @@ export default class Typista {
 	/**
 	 * Removes comments.
 	 *
-	 * @param {string} data A line from an affix file.
-	 * @return {string} The cleaned-up line.
+	 * @param line A line from an affix file.
+	 * @return The cleaned-up line.
 	 */
 	#removeAffixComments(line: string): string {
 		// This used to remove any string starting with '#' up to the end of the line,
@@ -355,7 +351,7 @@ export default class Typista {
 			}
 		}
 		// The first line is the number of words in the dictionary.
-		for (let i = 1, _len = lines.length; i < _len; i++) {
+		for (let i = 1, _len = lines.length; i < _len; ++i) {
 			const line = lines[i]
 			if (!line) {
 				// Ignore empty lines.
@@ -370,22 +366,22 @@ export default class Typista {
 				if (this.#flags.NEEDAFFIX == null || !ruleCodesArray.includes(this.#flags.NEEDAFFIX)) {
 					addWord(word, ruleCodesArray)
 				}
-				for (let j = 0, _jlen = ruleCodesArray.length; j < _jlen; j++) {
+				for (let j = 0, _jlen = ruleCodesArray.length; j < _jlen; ++j) {
 					const code = ruleCodesArray[j]
 					const rule = this.#rules[code]
 					if (rule) {
 						const newWords = this.#applyRule(word, rule)
-						for (let ii = 0, _iilen = newWords.length; ii < _iilen; ii++) {
+						for (let ii = 0, _iilen = newWords.length; ii < _iilen; ++ii) {
 							const newWord = newWords[ii]
 							addWord(newWord, [])
 							if (rule.combineable) {
-								for (let k = j + 1; k < _jlen; k++) {
+								for (let k = j + 1; k < _jlen; ++k) {
 									const combineCode = ruleCodesArray[k]
 									const combineRule = this.#rules[combineCode]
 									if (combineRule) {
 										if (combineRule.combineable && (rule.type != combineRule.type)) {
 											const otherNewWords = this.#applyRule(newWord, combineRule)
-											for (let iii = 0, _iiilen = otherNewWords.length; iii < _iiilen; iii++) {
+											for (let iii = 0, _iiilen = otherNewWords.length; iii < _iiilen; ++iii) {
 												const otherNewWord = otherNewWords[iii]
 												addWord(otherNewWord, [])
 											}
@@ -409,8 +405,8 @@ export default class Typista {
 	/**
 	 * Removes comment lines and then cleans up blank lines and trailing whitespace.
 	 *
-	 * @param {string} data The data from a .dic file.
-	 * @return {string} The cleaned-up data.
+	 * @param data The data from a .dic file.
+	 * @return The cleaned-up data.
 	 */
 	#removeDicComments(data: string): string {
 		// I can't find any official documentation on it, but at least the de_DE
@@ -450,14 +446,14 @@ export default class Typista {
 	/**
 	 * Applies an affix rule to a word.
 	 *
-	 * @param {string} word The base word.
-	 * @param {Object} rule The affix rule.
-	 * @returns {string[]} The new words generated by the rule.
+	 * @param word The base word.
+	 * @param rule The affix rule.
+	 * @returns The new words generated by the rule.
 	 */
 	#applyRule(word: string, rule: AffixRule): string[] {
 		const entries = rule.entries
 		let newWords: string[] = []
-		for (let i = 0, _len = entries.length; i < _len; i++) {
+		for (let i = 0, _len = entries.length; i < _len; ++i) {
 			const entry = entries[i]
 			if (!entry.match || word.match(entry.match)) {
 				let newWord = word
@@ -471,7 +467,7 @@ export default class Typista {
 				}
 				newWords.push(newWord)
 				if (entry.continuationClasses != null) {
-					for (let j = 0, _jlen = entry.continuationClasses.length; j < _jlen; j++) {
+					for (let j = 0, _jlen = entry.continuationClasses.length; j < _jlen; ++j) {
 						const continuationRule = this.#rules[entry.continuationClasses[j]]
 						if (continuationRule) {
 							newWords = newWords.concat(this.#applyRule(newWord, continuationRule))
@@ -544,8 +540,7 @@ export default class Typista {
 	/**
 	 * Checks whether a word exists in the current dictionary.
 	 *
-	 * @param {string} word The word to check.
-	 * @returns {boolean}
+	 * @param word The word to check.
 	 */
 	checkExact(word: string): boolean {
 		const ruleCodes = this.#dictionaryTable[word]
@@ -575,9 +570,8 @@ export default class Typista {
 	/**
 	 * Looks up whether a given word is flagged with a given flag.
 	 *
-	 * @param {string} word The word in question.
-	 * @param {string} flag The flag in question.
-	 * @return {boolean}
+	 * @param word The word in question.
+	 * @param flag The flag in question.
 	 */
 	#hasFlag(word: string, flag: Flag, wordFlags?: string[]): boolean {
 		wordFlags ??= Array.prototype.concat.apply([], this.#dictionaryTable[word] ?? [])
