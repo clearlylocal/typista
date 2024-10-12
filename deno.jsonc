@@ -1,0 +1,37 @@
+{
+	"lock": false,
+	"tasks": {
+		"test": "deno test -R",
+		"test:all": "INCLUDE_SLOW_TESTS=1 deno test -RE",
+		"bench": "deno test -R --watch src/_bench.ts",
+		"bench:log": "ENABLE_LOGGING=1 deno test -RE --watch src/_bench.ts"
+	},
+	"imports": {
+		"@std/assert": "jsr:@std/assert@^1.0.6",
+		"@std/cache": "jsr:@std/cache@^0.1.3",
+		"@std/text": "jsr:@std/text@^1.0.7",
+		"damerau-levenshtein-js": "npm:damerau-levenshtein-js@^1.1.8",
+		"fast-string-compare": "npm:fast-string-compare@^3.0.0",
+		"symspell": "npm:symspell@^0.6.1",
+		"typo-js": "npm:typo-js@^1.2.4"
+	},
+	"fmt": {
+		"semiColons": false,
+		"useTabs": true,
+		"lineWidth": 120,
+		"indentWidth": 4,
+		"singleQuote": true,
+		"proseWrap": "preserve",
+		"exclude": ["README.md", "reference"]
+	},
+	"compilerOptions": { "strict": true },
+	"lint": {
+		"exclude": [],
+		"rules": {
+			"tags": ["recommended"],
+			"exclude": [],
+			"include": []
+		}
+	},
+	"exclude": []
+}
